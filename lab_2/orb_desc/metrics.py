@@ -7,86 +7,92 @@ import matplotlib.pyplot as plt
 
 class Metrics:
     def __init__(self, descriptor, train_dir, test_dir):
-        self.correct_percent = None
-        self.all_features = None
-        self.correct_features = None
-        self.time = None
-        self.local_mistake = 0
         self.train_dataset = DatasetRetriever(train_dir)
         self.test_dataset = DatasetRetriever(test_dir)
         self.orb = descriptor
-        self.test_image = None
-        self.train_image = None
-        self.train_name = None
-        self.test_name = None
         self.metrics = {}
-        self.image_size = None
+        self.test_image_name=None
+        self.test_image=None
+        self.test_image_descriptor=None
+        self.test_image_keypoints=None
+        self.train_image_name = None
+        self.train_image = None
+        self.train_image_descriptor = None
+        self.train_image_keypoints = None
+        self.ratio=0.85
 
     def __trainDescriptor__(self):
         (self.train_image, self.train_name) = next(iter(self.train_dataset))
-        self.train_keypoints, self.train_descriptor = self.orb.detectAndCompute(self.train_image, None)
+        self.train_keypoints,   self.train_descriptor = self.orb.detectAndCompute(self.train_image, None)
         self.train_descriptor = np.float32(self.train_descriptor)
         return self.train_keypoints, self.train_descriptor, self.train_image, self.train_name
 
     def __testDescriptor__(self):
         self.train_keypoints, self.train_descriptor, self.train_image, self.train_name = self.__trainDescriptor__()
         metrics = {}
-        for (self.test_image, self.test_name) in iter(self.test_dataset):
-            print(self.test_name)
+        correct_features=0
+        for (test_image, test_name) in iter(self.test_dataset):
+            print(test_name)
             start_time = datetime.datetime.now()
             try:
-                self.test_keypoints, self.test_descriptor = self.orb.detectAndCompute(self.test_image, None)
-                self.test_descriptor = np.float32(self.test_descriptor)
+                test_keypoints, test_descriptor = self.orb.detectAndCompute(test_image, None)
+                test_descriptor = np.float32(test_descriptor)
                 end_time = datetime.datetime.now()
                 time_diff = (end_time - start_time)
-                self.time = time_diff.total_seconds()
-                FLANN_INDEX_KDTREE = 0
-                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-                search_params = dict()  # or pass empty dictionary
-                flann = cv2.FlannBasedMatcher(index_params, search_params)
+                time = time_diff.total_seconds()
+                bf = cv2.BFMatcher()
                 try:
-                    matches = flann.knnMatch(self.train_descriptor, self.test_descriptor, 2)
-                    ratio = 0.55
+                    matches = bf.knnMatch(self.train_descriptor, test_descriptor, 2)
                     good_matches = []
-                    matchesMask = [[0, 0] for i in range(len(matches))]
-
-                    # ratio test as per Lowe's paper
-                    for i, (m, n) in enumerate(matches):
-                        if m.distance < ratio * n.distance:
-                            good_matches.append(m)
-
-                    draw_params = dict(matchColor=(0, 255, 0),
-                                       singlePointColor=(255, 0, 0),
-                                       matchesMask=matchesMask,
-                                       flags=0)
-                    print(len(good_matches))
-                    print(len(self.test_keypoints))
-                    plt.show()
-                    self.correct_features = len(good_matches) / len(self.test_keypoints)
+                    for m, n in matches:
+                        if m.distance < 0.75 * n.distance:
+                            good_matches.append([m])
+                    correct_features = len(good_matches) / len(test_keypoints)
                     try:
-                        for i in good_matches:
-                            self.local_mistake += i.distance
-                        self.local_mistake /= len(good_matches)
+                        local_mistake=0
+                        for i in range(len(good_matches)):
+                            local_mistake += good_matches[i][0].distance
+                        local_mistake /= len(good_matches)
                     except:
-                        self.local_mistake = -1
+                        local_mistake = -1
 
                 except TypeError:
                     print("BAD DESCRIPTOR")
-                    self.local_mistake = -1
+                    local_mistake = -1
                     self.correct_features = 0
 
-                self.image_size = self.test_image.shape[0] * self.test_image.shape[1]
+                image_size = test_image.shape[0] * test_image.shape[1]
                 metrics.update(
-                    {self.test_name: [self.correct_features, self.local_mistake, self.time, self.image_size]})
+                    {test_name: [correct_features, local_mistake, time, image_size]})
             except:
                 print("CANNOT make the descriptor")
-                self.local_mistake = -1
-                self.correct_features = 0
-
-                self.image_size = self.test_image.shape[0] * self.test_image.shape[1]
-                metrics.update({self.test_name: [self.correct_features, self.local_mistake, self.time, self.image_size]})
+                local_mistake = -1
+                correct_features = 0
+                time=0
+                image_size = test_image.shape[0] * test_image.shape[1]
+                metrics.update({test_name: [correct_features, local_mistake, time, image_size]})
 
         return metrics
+
+    def image_metrics(self,image_name):
+        self.train_keypoints, self.train_descriptor, self.train_image, self.train_name = self.__trainDescriptor__()
+        self.test_image=self.test_dataset.getimage(image_name)
+        self.test_keypoints, self.test_descriptor = self.orb.detectAndCompute(self.test_image, None)
+        test_descriptor = np.float32(self.test_descriptor)
+        bf = cv2.BFMatcher()
+        try:
+            matches = bf.knnMatch(self.train_descriptor, test_descriptor, 2)
+            try:
+                good_matches = []
+                for m, n in matches:
+                    if m.distance < self.ratio * n.distance:
+                        good_matches.append([m])
+                result = cv2.drawMatchesKnn(self.train_image,self.train_keypoints,self.test_image,self.test_keypoints,good_matches,None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+                plt.imshow(result)
+                plt.show()
+            except: print("no good matches")
+        except:
+            print("CANNOT make the descriptor")
 
     def execute(self):
         self.metrics=self.__testDescriptor__()
